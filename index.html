@@ -537,6 +537,10 @@
 </head>
 <body>
 
+<!-- Loading overlay -->
+<div class="loading-overlay" id="loading-overlay">
+  <div class="loading-spinner"></div>
+  <div class="loading-text">Verbinde mit Datenbank…</div>
 </div>
 
 <header>
@@ -598,11 +602,42 @@
   </div>
 </main>
 
+<!-- ═══════════════════════════════════════════════════════
+     FIREBASE SDK (v9 compat)
+     ═══════════════════════════════════════════════════════ -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 
 <script>
-const STORAGE_KEY = 'smm-tracker-v2';
+// ╔═══════════════════════════════════════════════════════════╗
+// ║  🔧 FIREBASE CONFIG – HIER DEINE DATEN EINTRAGEN!       ║
+// ║                                                           ║
+// ║  Erstelle ein Firebase-Projekt und kopiere die Config     ║
+// ║  aus der Firebase Console hier rein.                      ║
+// ║  Siehe beiliegende Anleitung (setup-anleitung.md)         ║
+// ╚═══════════════════════════════════════════════════════════╝
+const firebaseConfig = {
+  apiKey:            "DEIN_API_KEY",
+  authDomain:        "DEIN_PROJEKT.firebaseapp.com",
+  databaseURL:       "https://DEIN_PROJEKT-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId:         "DEIN_PROJEKT",
+  storageBucket:     "DEIN_PROJEKT.appspot.com",
+  messagingSenderId: "000000000000",
+  appId:             "DEIN_APP_ID"
+};
+
+// Pfad in der Datenbank (kann angepasst werden)
+const DB_PATH = 'smm-tracker/weeks';
+
+// ── Firebase Init ──
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+const weeksRef = db.ref(DB_PATH);
+
 let weeks = [];
 let counter = 0;
+let saveTimeout = null;
+let isInitialized = false;
 
 const METRICS = [
   { key: 'reach',         label: '👁️ Reach' },
@@ -617,30 +652,67 @@ const METRICS = [
 
 const FORMATS = ['Reel', 'Carousel', 'Static Post', 'Story'];
 
-// ── localStorage Save/Load ──
-function save() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(weeks));
-    setSyncStatus('live', 'gespeichert ✓');
-  } catch(e) {
-    setSyncStatus('error', 'Fehler!');
-  }
-}
-
-function load() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) weeks = JSON.parse(raw);
-  } catch(e) { weeks = []; }
-}
-
 // ── Sync Indicator ──
 function setSyncStatus(status, text) {
   const el = document.getElementById('sync-indicator');
-  if (!el) return;
   const textEl = el.querySelector('.sync-text');
   el.className = 'sync-indicator ' + status;
-  if (textEl) textEl.textContent = text;
+  textEl.textContent = text;
+}
+
+// ── Firebase Save (debounced) ──
+function save() {
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    setSyncStatus('syncing', 'speichert…');
+    weeksRef.set(weeks)
+      .then(() => {
+        setSyncStatus('live', 'live sync ✓');
+      })
+      .catch(err => {
+        console.error('Save error:', err);
+        setSyncStatus('error', 'Fehler!');
+      });
+  }, 400);
+}
+
+// ── Firebase Realtime Listener ──
+function startRealtimeSync() {
+  weeksRef.on('value', (snapshot) => {
+    const data = snapshot.val();
+    if (data && Array.isArray(data)) {
+      weeks = data;
+    } else {
+      weeks = [];
+    }
+
+    // Re-render all cards
+    document.getElementById('cards-container').innerHTML = '';
+    weeks.forEach(w => renderCard(w, false));
+    updateEmptyState();
+
+    // If overview is active, re-render it too
+    const overviewActive = document.getElementById('view-overview').classList.contains('active');
+    if (overviewActive) renderOverview();
+
+    if (!isInitialized) {
+      isInitialized = true;
+      const overlay = document.getElementById('loading-overlay');
+      overlay.classList.add('hidden');
+      setTimeout(() => overlay.remove(), 500);
+      setSyncStatus('live', 'live sync ✓');
+    }
+  }, (err) => {
+    console.error('Realtime sync error:', err);
+    setSyncStatus('error', 'Verbindungsfehler');
+
+    if (!isInitialized) {
+      isInitialized = true;
+      const overlay = document.getElementById('loading-overlay');
+      overlay.classList.add('hidden');
+      setTimeout(() => overlay.remove(), 500);
+    }
+  });
 }
 
 function getWeek(id) { return weeks.find(w => w.id === id); }
@@ -829,13 +901,13 @@ function renderOverview() {
   const avgER = (withData.reduce((s, w) => s + (parseFloat(calcER(w)) || 0), 0) / withData.length).toFixed(2);
 
   const summaryItems = [
-    { label: '⌀ Reach',           value: avg('reach').toLocaleString('de') },
-    { label: '⌀ Impressions',     value: avg('impressions').toLocaleString('de') },
-    { label: '⌀ Likes',           value: avg('likes').toLocaleString('de') },
-    { label: '⌀ Saves',           value: avg('saves').toLocaleString('de') },
-    { label: '⌀ Link-Klicks',     value: avg('linkClicks').toLocaleString('de') },
+    { label: '⌀ Reach',         value: avg('reach').toLocaleString('de') },
+    { label: '⌀ Impressions',   value: avg('impressions').toLocaleString('de') },
+    { label: '⌀ Likes',         value: avg('likes').toLocaleString('de') },
+    { label: '⌀ Saves',         value: avg('saves').toLocaleString('de') },
+    { label: '⌀ Link-Klicks',   value: avg('linkClicks').toLocaleString('de') },
     { label: '⌀ Engagement Rate', value: avgER + '%' },
-    { label: 'Posts getrackt',    value: withData.length },
+    { label: 'Posts getrackt',  value: withData.length },
   ];
 
   const grid = document.getElementById('stats-grid');
@@ -886,21 +958,18 @@ function esc(str) {
 
 function resetData() {
   if (!confirm('Wirklich ALLE Daten unwiderruflich löschen?')) return;
-  localStorage.removeItem(STORAGE_KEY);
-  weeks = [];
-  document.getElementById('cards-container').innerHTML = '';
-  updateEmptyState();
-  setSyncStatus('live', 'gelöscht ✓');
+  weeksRef.set(null)
+    .then(() => {
+      weeks = [];
+      document.getElementById('cards-container').innerHTML = '';
+      updateEmptyState();
+      setSyncStatus('synced', 'gelöscht ✓');
+    })
+    .catch(err => console.error('Reset error:', err));
 }
 
-// ── Init ──
-load();
-// Hide loading overlay immediately
-const overlay = document.getElementById('loading-overlay');
-if (overlay) overlay.remove();
-setSyncStatus('live', 'lokal gespeichert');
-weeks.forEach(w => renderCard(w, false));
-updateEmptyState();
+// ── Start ──
+startRealtimeSync();
 </script>
 </body>
 </html>
