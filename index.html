@@ -537,10 +537,6 @@
 </head>
 <body>
 
-<!-- Loading overlay -->
-<div class="loading-overlay" id="loading-overlay">
-  <div class="loading-spinner"></div>
-  <div class="loading-text">Verbinde mit Datenbank…</div>
 </div>
 
 <header>
@@ -602,37 +598,11 @@
   </div>
 </main>
 
-<!-- ═══════════════════════════════════════════════════════
-     FIREBASE SDK (v9 compat)
-     ═══════════════════════════════════════════════════════ -->
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 
 <script>
-const firebaseConfig = {
-  apiKey: "AIzaSyB7DcFwhKORvbB3sDd7vpXjOOnIngxhjjU",
-  authDomain: "smm-tracker-insta.firebaseapp.com",
-  databaseURL: "https://smm-tracker-insta-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "smm-tracker-insta",
-  storageBucket: "smm-tracker-insta.firebasestorage.app",
-  messagingSenderId: "69706672023",
-  appId: "1:69706672023:web:2fc6d195dd6da18ab2c6d2"
-};
-
-// Pfad in der Datenbank (kann angepasst werden)
-const DB_PATH = 'smm-tracker/weeks';
-
-// ── Firebase Init ──
-firebase.initializeApp(firebaseConfig);
-const db = firebase.database();
-const weeksRef = db.ref(DB_PATH);
-
+const STORAGE_KEY = 'smm-tracker-v2';
 let weeks = [];
 let counter = 0;
-let saveTimeout = null;
-let isInitialized = false;
-let localSaveInProgress = false;
-let localSaveTimer = null;
 
 const METRICS = [
   { key: 'reach',         label: '👁️ Reach' },
@@ -647,91 +617,30 @@ const METRICS = [
 
 const FORMATS = ['Reel', 'Carousel', 'Static Post', 'Story'];
 
+// ── localStorage Save/Load ──
+function save() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(weeks));
+    setSyncStatus('live', 'gespeichert ✓');
+  } catch(e) {
+    setSyncStatus('error', 'Fehler!');
+  }
+}
+
+function load() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) weeks = JSON.parse(raw);
+  } catch(e) { weeks = []; }
+}
+
 // ── Sync Indicator ──
 function setSyncStatus(status, text) {
   const el = document.getElementById('sync-indicator');
+  if (!el) return;
   const textEl = el.querySelector('.sync-text');
   el.className = 'sync-indicator ' + status;
-  textEl.textContent = text;
-}
-
-// ── Firebase Save (debounced) ──
-function save() {
-  if (saveTimeout) clearTimeout(saveTimeout);
-  saveTimeout = setTimeout(() => {
-    setSyncStatus('syncing', 'speichert…');
-    // Block re-render from own save echo
-    localSaveInProgress = true;
-    if (localSaveTimer) clearTimeout(localSaveTimer);
-    localSaveTimer = setTimeout(() => { localSaveInProgress = false; }, 2000);
-
-    weeksRef.set(weeks)
-      .then(() => {
-        setSyncStatus('live', 'live sync ✓');
-      })
-      .catch(err => {
-        console.error('Save error:', err);
-        setSyncStatus('error', 'Fehler!');
-        localSaveInProgress = false;
-      });
-  }, 400);
-}
-
-// ── Firebase Realtime Listener ──
-function startRealtimeSync() {
-  weeksRef.on('value', (snapshot) => {
-    const data = snapshot.val();
-
-    // On initial load: always render
-    if (!isInitialized) {
-      if (data && Array.isArray(data)) {
-        weeks = data;
-      } else {
-        weeks = [];
-      }
-      document.getElementById('cards-container').innerHTML = '';
-      weeks.forEach(w => renderCard(w, false));
-      updateEmptyState();
-
-      isInitialized = true;
-      const overlay = document.getElementById('loading-overlay');
-      overlay.classList.add('hidden');
-      setTimeout(() => overlay.remove(), 500);
-      setSyncStatus('live', 'live sync ✓');
-      return;
-    }
-
-    // Skip re-render if this is our own save echoing back
-    if (localSaveInProgress) {
-      localSaveInProgress = false;
-      return;
-    }
-
-    // External change from another device → full re-render
-    if (data && Array.isArray(data)) {
-      weeks = data;
-    } else {
-      weeks = [];
-    }
-    document.getElementById('cards-container').innerHTML = '';
-    weeks.forEach(w => renderCard(w, false));
-    updateEmptyState();
-
-    const overviewActive = document.getElementById('view-overview').classList.contains('active');
-    if (overviewActive) renderOverview();
-
-    setSyncStatus('live', 'live sync ✓');
-  }, (err) => {
-    console.error('Realtime sync error:', err);
-    setSyncStatus('error', 'Verbindungsfehler');
-
-    if (!isInitialized) {
-      isInitialized = true;
-      const overlay = document.getElementById('loading-overlay');
-      overlay.classList.add('hidden');
-      setTimeout(() => overlay.remove(), 500);
-    }
-  });
+  if (textEl) textEl.textContent = text;
 }
 
 function getWeek(id) { return weeks.find(w => w.id === id); }
@@ -920,13 +829,13 @@ function renderOverview() {
   const avgER = (withData.reduce((s, w) => s + (parseFloat(calcER(w)) || 0), 0) / withData.length).toFixed(2);
 
   const summaryItems = [
-    { label: '⌀ Reach',         value: avg('reach').toLocaleString('de') },
-    { label: '⌀ Impressions',   value: avg('impressions').toLocaleString('de') },
-    { label: '⌀ Likes',         value: avg('likes').toLocaleString('de') },
-    { label: '⌀ Saves',         value: avg('saves').toLocaleString('de') },
-    { label: '⌀ Link-Klicks',   value: avg('linkClicks').toLocaleString('de') },
+    { label: '⌀ Reach',           value: avg('reach').toLocaleString('de') },
+    { label: '⌀ Impressions',     value: avg('impressions').toLocaleString('de') },
+    { label: '⌀ Likes',           value: avg('likes').toLocaleString('de') },
+    { label: '⌀ Saves',           value: avg('saves').toLocaleString('de') },
+    { label: '⌀ Link-Klicks',     value: avg('linkClicks').toLocaleString('de') },
     { label: '⌀ Engagement Rate', value: avgER + '%' },
-    { label: 'Posts getrackt',  value: withData.length },
+    { label: 'Posts getrackt',    value: withData.length },
   ];
 
   const grid = document.getElementById('stats-grid');
@@ -977,18 +886,21 @@ function esc(str) {
 
 function resetData() {
   if (!confirm('Wirklich ALLE Daten unwiderruflich löschen?')) return;
-  weeksRef.set(null)
-    .then(() => {
-      weeks = [];
-      document.getElementById('cards-container').innerHTML = '';
-      updateEmptyState();
-      setSyncStatus('synced', 'gelöscht ✓');
-    })
-    .catch(err => console.error('Reset error:', err));
+  localStorage.removeItem(STORAGE_KEY);
+  weeks = [];
+  document.getElementById('cards-container').innerHTML = '';
+  updateEmptyState();
+  setSyncStatus('live', 'gelöscht ✓');
 }
 
-// ── Start ──
-startRealtimeSync();
+// ── Init ──
+load();
+// Hide loading overlay immediately
+const overlay = document.getElementById('loading-overlay');
+if (overlay) overlay.remove();
+setSyncStatus('live', 'lokal gespeichert');
+weeks.forEach(w => renderCard(w, false));
+updateEmptyState();
 </script>
 </body>
 </html>
